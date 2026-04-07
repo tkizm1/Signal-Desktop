@@ -17,7 +17,7 @@
   "scripts": {
     "postinstall": "pnpm run build:acknowledgments && pnpm run electron:install-app-deps",
     "postuninstall": "pnpm run build:acknowledgments",
-    "start": "electron .",
+    "start": "cross-env SIGNAL_ENABLE_HTTP=1 electron .",
     "generate": "run-s generate:phase-0 generate:phase-1",
     "generate:phase-0": "run-s build:protobuf build:rolldown:prod",
     "generate:phase-1": "run-p --aggregate-output --print-label build:icu-types build:compact-locales build:styles:prod get-expire-time build:webaudio-recorder build:policy-files",

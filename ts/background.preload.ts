@@ -287,6 +287,8 @@ import { initMessageCleanup } from './services/messageStateCleanup.dom.ts';
 import { MessageCache } from './services/MessageCache.preload.ts';
 import { saveAndNotify } from './messages/saveAndNotify.preload.ts';
 import { getBackupKeyHash } from './services/backups/crypto.preload.ts';
+import { isMockServer } from './util/isMockServer.dom.ts';
+import { maybeParseUrl } from './util/url.std.ts';
 
 const { isNumber, throttle } = lodash;
 
@@ -295,6 +297,13 @@ const { i18n } = window.SignalContext;
 
 export function isOverHourIntoPast(timestamp: number): boolean {
   return isNumber(timestamp) && isOlderThan(timestamp, HOUR);
+}
+
+function isLocalHttpChatService(): boolean {
+  const serverUrl = window.SignalContext.config.serverUrl;
+  const parsedServerUrl = maybeParseUrl(serverUrl);
+
+  return parsedServerUrl?.protocol === 'http:' && isMockServer(serverUrl);
 }
 
 export async function cleanupSessionResets(): Promise<void> {
@@ -1709,9 +1718,11 @@ export async function startApp(): Promise<void> {
 
       const postRegistrationSyncsComplete =
         itemStorage.get('postRegistrationSyncsStatus') !== 'incomplete';
+      const shouldSkipPostRegistrationSyncs =
+        isLocalHttpChatService() && !postRegistrationSyncsComplete;
 
       // 3. Send any critical sync requests after registration
-      if (!postRegistrationSyncsComplete) {
+      if (!postRegistrationSyncsComplete && !shouldSkipPostRegistrationSyncs) {
         log.info(`${logId}: postRegistrationSyncs not complete, sending sync`);
 
         setIsInitialContactSync(true);
@@ -1733,7 +1744,12 @@ export async function startApp(): Promise<void> {
       registerRequestHandler(messageReceiver);
 
       // 6. Kickoff storage service sync
-      if (isFirstAuthSocketConnect || !postRegistrationSyncsComplete) {
+      if (
+        isFirstAuthSocketConnect &&
+        shouldSkipPostRegistrationSyncs
+      ) {
+        drop(enableStorageService());
+      } else if (isFirstAuthSocketConnect || !postRegistrationSyncsComplete) {
         log.info(`${logId}: triggering storage service sync`);
 
         storageServiceSyncComplete = waitForEvent(
@@ -1749,7 +1765,12 @@ export async function startApp(): Promise<void> {
       }
 
       // 7. Wait for critical post-registration syncs before showing inbox
-      if (!postRegistrationSyncsComplete) {
+      if (shouldSkipPostRegistrationSyncs) {
+        log.info(
+          `${logId}: local HTTP chat service detected; skipping postRegistrationSyncs`
+        );
+        await itemStorage.put('postRegistrationSyncsStatus', 'complete');
+      } else if (!postRegistrationSyncsComplete) {
         const syncsToAwaitBeforeShowingInbox = [contactSyncComplete];
 
         // If backup was imported, we do not need to await the storage service sync
@@ -1775,6 +1796,13 @@ export async function startApp(): Promise<void> {
       if (state.app.appView === AppViewType.Installer) {
         log.info(`${logId}: switching from installer to inbox`);
         window.reduxActions.app.openInbox();
+      }
+
+      if (isLocalHttpChatService() && !messageReceiver.hasEmptied()) {
+        log.info(
+          `${logId}: local HTTP chat service detected; forcing initial empty event`
+        );
+        messageReceiver.forceEmptyEvent();
       }
 
       // 9. Start services requiring auth connection

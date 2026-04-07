@@ -7,8 +7,8 @@ import {
   type Net,
 } from '@signalapp/libsignal-client';
 import URL from 'node:url';
+import fetch, { Headers } from 'node-fetch';
 import type { RequestInit, Response } from 'node-fetch';
-import { Headers } from 'node-fetch';
 import EventListener from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -61,6 +61,11 @@ export const UNAUTHENTICATED_CHANNEL_NAME = 'unauthenticated';
 export const AUTHENTICATED_CHANNEL_NAME = 'authenticated';
 
 export const NORMAL_DISCONNECT_CODE = 3000;
+
+function shouldUseDirectHttpFetch(url: string): boolean {
+  const parsed = URL.parse(url);
+  return parsed.protocol === 'http:';
+}
 
 type SocketStatusUpdate = { status: SocketStatus };
 
@@ -399,6 +404,11 @@ export class SocketManager extends EventListener {
   // websocket resources. This wrapper supports only limited number of features
   // of node-fetch despite being API compatible.
   public async fetch(url: string, init: RequestInit): Promise<Response> {
+    if (shouldUseDirectHttpFetch(url)) {
+      log.info(`fetch: using direct HTTP for ${url}`);
+      return fetch(url, init);
+    }
+
     const headers = new Headers(init.headers);
 
     let resource: IChatConnection<'auth'> | IChatConnection<'unauth'>;

@@ -5,6 +5,7 @@ import type { ProtocolRequest, ProtocolResponse, Session } from 'electron';
 
 import { isAbsolute, normalize } from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
+import { URL } from 'node:url';
 import {
   getAvatarsPath,
   getBadgesPath,
@@ -18,6 +19,12 @@ import {
 import { createLogger } from '../ts/logging/log.std.ts';
 
 const log = createLogger('protocol_filter');
+const ALLOWED_HTTP_HOSTS = new Set([
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  '5.175.220.72',
+]);
 
 type CallbackType = (response: string | ProtocolResponse) => void;
 
@@ -150,6 +157,16 @@ function _disabledHandler(
   callback({ error: -10 });
 }
 
+function _isAllowedHttpTarget(targetUrl: string): boolean {
+  try {
+    const parsed = new URL(targetUrl);
+    return ALLOWED_HTTP_HOSTS.has(parsed.hostname);
+  } catch (error) {
+    log.warn(`Failed to parse HTTP target URL: ${targetUrl}`, error);
+    return false;
+  }
+}
+
 export function installWebHandler({
   session,
   enableHttp,
@@ -174,5 +191,21 @@ export function installWebHandler({
     protocol.interceptFileProtocol('https', _disabledHandler);
     protocol.interceptFileProtocol('ws', _disabledHandler);
     protocol.interceptFileProtocol('wss', _disabledHandler);
+    return;
   }
+
+  session.webRequest.onBeforeRequest(
+    {
+      urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'],
+    },
+    (details, callback) => {
+      if (_isAllowedHttpTarget(details.url)) {
+        callback({ cancel: false });
+        return;
+      }
+
+      log.warn(`Blocking non-whitelisted web request: ${details.url}`);
+      callback({ cancel: true });
+    }
+  );
 }

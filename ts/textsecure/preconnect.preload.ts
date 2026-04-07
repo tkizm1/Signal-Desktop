@@ -8,6 +8,7 @@ import { isStagingServer } from '../util/isStagingServer.dom.ts';
 import { getMockServerPort } from '../util/getMockServerPort.dom.ts';
 import { isMockServer } from '../util/isMockServer.dom.ts';
 import { pemToDer } from '../util/pemToDer.std.ts';
+import { maybeParseUrl } from '../util/url.std.ts';
 import { drop } from '../util/drop.std.ts';
 import { toLogFormat } from '../types/errors.std.ts';
 import { createLogger } from '../logging/log.std.ts';
@@ -31,8 +32,10 @@ function resolveLibsignalNet(
     });
   }
 
-  if (isMockServer(url) && certificateAuthority !== undefined) {
+  if (isMockServer(url)) {
     const DISCARD_PORT = 9; // Reserved by RFC 863.
+    const parsedUrl = maybeParseUrl(url);
+    const isLocalHttp = parsedUrl?.protocol === 'http:';
     log.info('libsignal net environment resolved to mock');
     return new Net.Net({
       localTestServer: true,
@@ -41,7 +44,11 @@ function resolveLibsignalNet(
       TESTING_localServer_cdsiPort: DISCARD_PORT,
       TESTING_localServer_svr2Port: DISCARD_PORT,
       TESTING_localServer_svrBPort: DISCARD_PORT,
-      TESTING_localServer_rootCertificateDer: pemToDer(certificateAuthority),
+      TESTING_localServer_rootCertificateDer:
+        certificateAuthority && !isLocalHttp
+          ? pemToDer(certificateAuthority)
+          : new Uint8Array(new ArrayBuffer(0)),
+      TESTING_localServer_httpVersion: isLocalHttp ? 1 : undefined,
     });
   }
 

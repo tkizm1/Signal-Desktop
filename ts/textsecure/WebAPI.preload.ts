@@ -14,10 +14,10 @@ import {
   LibSignalErrorBase,
   ErrorCode,
   ServiceId,
+  Aci,
+  Pni,
   type KEMPublicKey,
   type PublicKey,
-  type Aci,
-  type Pni,
 } from '@signalapp/libsignal-client';
 import { AccountAttributes } from '@signalapp/libsignal-client/dist/net.js';
 import type {
@@ -76,6 +76,7 @@ import {
   type SocketStatuses,
   type SocketExpirationReason,
 } from './SocketManager.preload.ts';
+import { SocketStatus } from '../types/SocketStatus.std.ts';
 import type { CDSAuthType, CDSResponseType } from './cds/Types.d.ts';
 import { CDSI } from './cds/CDSI.node.ts';
 import { SignalService as Proto } from '../protobuf/index.std.ts';
@@ -88,6 +89,7 @@ import type {
 } from './Types.d.ts';
 import { handleStatusCode, translateError } from './Utils.dom.ts';
 import { createLogger } from '../logging/log.std.ts';
+import { isMockServer } from '../util/isMockServer.dom.ts';
 import { maybeParseUrl, urlPathFromComponents } from '../util/url.std.ts';
 import { HOUR, MINUTE, SECOND } from '../util/durations/index.std.ts';
 import { safeParseNumber } from '../util/numbers.std.ts';
@@ -181,7 +183,7 @@ const GET_ATTACHMENT_CHUNK_TIMEOUT = 10 * SECOND;
 type AgentCacheType = {
   [name: string]: {
     timestamp: number;
-    agent: ProxyAgent | Agent;
+    agent: ProxyAgent | Agent | undefined;
   };
 };
 const agents: AgentCacheType = {};
@@ -352,12 +354,13 @@ async function getFetchOptions<Type extends ResponseType, OutputShape>(
   options: Omit<PromiseAjaxOptionsType<Type, OutputShape>, 'responseType'>
 ): Promise<FetchOptionsType> {
   const { proxyUrl } = options;
+  const isHttpRequest = options.host?.startsWith('http://');
 
   const timeout =
     typeof options.timeout === 'number' ? options.timeout : DEFAULT_TIMEOUT;
 
   const agentType = options.unauthenticated ? 'unauth' : 'auth';
-  const cacheKey = `${proxyUrl}-${agentType}`;
+  const cacheKey = `${proxyUrl}-${agentType}-${isHttpRequest ? 'http' : 'https'}`;
 
   const { timestamp } = agents[cacheKey] || { timestamp: null };
   if (!timestamp || timestamp + FIVE_MINUTES < Date.now()) {
@@ -367,6 +370,8 @@ async function getFetchOptions<Type extends ResponseType, OutputShape>(
     agents[cacheKey] = {
       agent: proxyUrl
         ? await createProxyAgent(proxyUrl)
+        : isHttpRequest
+          ? undefined
         : createHTTPSAgent({
             keepAlive: !options.disableSessionResumption,
             maxCachedSessions: options.disableSessionResumption ? 0 : undefined,
@@ -389,7 +394,7 @@ async function getFetchOptions<Type extends ResponseType, OutputShape>(
     } as FetchHeaderListType,
     redirect: options.redirect,
     agent,
-    ca: options.certificateAuthority,
+    ca: isHttpRequest ? undefined : options.certificateAuthority,
     timeout,
     signal: options.abortSignal,
   };
@@ -399,6 +404,33 @@ async function getFetchOptions<Type extends ResponseType, OutputShape>(
   }
 
   return fetchOptions;
+}
+
+function isLocalHttpChatService(): boolean {
+  const parsedChatServiceUrl = maybeParseUrl(chatServiceUrl);
+  return (
+    parsedChatServiceUrl?.protocol === 'http:' && isMockServer(chatServiceUrl)
+  );
+}
+
+function getLocalHttpSocketStatuses(): SocketStatuses {
+  return {
+    authenticated: {
+      status: SocketStatus.OPEN,
+      lastConnectionTimestamp: Date.now(),
+    },
+    unauthenticated: {
+      status: SocketStatus.CLOSED,
+    },
+  };
+}
+
+function emitLocalHttpOnlineStatus(context: string): void {
+  log.info(
+    `[local-http] ${context}: treating chat service as online without websocket`
+  );
+  window.Whisper.events.emit('socketStatusChange');
+  window.Whisper.events.emit('online');
 }
 
 async function _promiseAjax<Type extends ResponseType, OutputShape>(
@@ -1798,6 +1830,14 @@ export async function connect({
   username = initialUsername;
   password = initialPassword;
 
+  if (isLocalHttpChatService()) {
+    log.info(
+      'connect: skipping authenticated websocket for local HTTP chat service'
+    );
+    emitLocalHttpOnlineStatus('connect');
+    return;
+  }
+
   if (hasBuildExpired) {
     drop(socketManager.onExpiration('build'));
   }
@@ -1889,7 +1929,8 @@ async function _ajax<Type extends AjaxResponseType, OutputShape>(
     default:
       throw missingCaseError(param);
   }
-  const useWebSocketForEndpoint = param.host === 'chatService';
+  const useWebSocketForEndpoint =
+    param.host === 'chatService' && !isLocalHttpChatService();
 
   const outerParams: PromiseAjaxOptionsType<Type, OutputShape> = {
     socketManager: useWebSocketForEndpoint ? socketManager : undefined,
@@ -1993,6 +2034,11 @@ export async function authenticate({
   username = newUsername;
   password = newPassword;
 
+  if (isLocalHttpChatService()) {
+    emitLocalHttpOnlineStatus('authenticate');
+    return;
+  }
+
   await socketManager.authenticate({ username, password });
 }
 
@@ -2004,6 +2050,10 @@ export async function logout(): Promise<void> {
 }
 
 export function getSocketStatus(): SocketStatuses {
+  if (isLocalHttpChatService()) {
+    return getLocalHttpSocketStatuses();
+  }
+
   return socketManager.getStatus();
 }
 
@@ -2017,24 +2067,48 @@ export function checkSockets(): void {
 }
 
 export function isOnline(): boolean | undefined {
+  if (isLocalHttpChatService()) {
+    return true;
+  }
+
   return socketManager.isOnline;
 }
 
 export async function onNavigatorOnline(): Promise<void> {
+  if (isLocalHttpChatService()) {
+    emitLocalHttpOnlineStatus('navigator-online');
+    return;
+  }
+
   await socketManager.onNavigatorOnline();
 }
 
 export async function onNavigatorOffline(): Promise<void> {
+  if (isLocalHttpChatService()) {
+    window.Whisper.events.emit('offline');
+    return;
+  }
+
   await socketManager.onNavigatorOffline();
 }
 
 export async function onExpiration(
   reason: SocketExpirationReason
 ): Promise<void> {
+  if (isLocalHttpChatService()) {
+    log.info(`onExpiration: ignoring ${reason} for local HTTP chat service`);
+    return;
+  }
+
   await socketManager.onExpiration(reason);
 }
 
 export async function reconnect(): Promise<void> {
+  if (isLocalHttpChatService()) {
+    emitLocalHttpOnlineStatus('reconnect');
+    return;
+  }
+
   await socketManager.reconnect();
 }
 
@@ -2047,6 +2121,13 @@ export function unregisterRequestHandler(handler: IRequestHandler): void {
 }
 
 export function onHasStoriesDisabledChange(newValue: boolean): void {
+  if (isLocalHttpChatService()) {
+    log.info(
+      `onHasStoriesDisabledChange: ignoring websocket reconnect for local HTTP (${newValue})`
+    );
+    return;
+  }
+
   void socketManager.onHasStoriesDisabledChange(newValue);
 }
 
@@ -2742,6 +2823,10 @@ export async function requestVerification(
   captcha: string,
   transport: VerificationTransport
 ): Promise<RequestVerificationResultType> {
+  if (isLocalHttpChatService()) {
+    return requestVerificationOverLocalHttp(number, captcha, transport);
+  }
+
   // Create a new blank session using just a E164
   const session = await libsignalNet.createRegistrationSession({
     e164: number,
@@ -2764,6 +2849,180 @@ export async function requestVerification(
 
   // Return sessionId to be used in `createAccount`
   return { sessionId: session.sessionId };
+}
+
+const verificationSessionResponseZod = z.object({
+  id: z.string(),
+  allowedToRequestCode: z.boolean(),
+  requestedInformation: z.array(z.string()).catch([]),
+  verified: z.boolean().optional(),
+});
+
+const localCreateAccountResponseZod = z.object({
+  uuid: z.string().uuid(),
+  pni: z.string().uuid(),
+});
+
+async function localRegistrationRequest<T>(
+  path: string,
+  method: 'POST' | 'PATCH' | 'PUT',
+  body: unknown,
+  schema: z.ZodType<T>,
+  extraHeaders?: Record<string, string>
+): Promise<T> {
+  const response = await fetch(`${chatServiceUrl}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': getUserAgent(version),
+      'X-Signal-Agent': 'OWD',
+      ...extraHeaders,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const text = await response.text();
+  let data: unknown;
+  if (text.length > 0) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+
+    if (data && typeof data === 'object') {
+      const typed = data as { message?: unknown; errors?: unknown };
+      if (typeof typed.message === 'string') {
+        message = typed.message;
+      } else if (
+        Array.isArray(typed.errors) &&
+        typed.errors.every(item => typeof item === 'string')
+      ) {
+        message = typed.errors.join(', ');
+      }
+    }
+
+    throw new Error(`local registration request failed: ${message}`);
+  }
+
+  return schema.parse(data);
+}
+
+async function requestVerificationOverLocalHttp(
+  number: string,
+  captcha: string,
+  transport: VerificationTransport
+): Promise<RequestVerificationResultType> {
+  log.info('requestVerification: using local HTTP verification session flow');
+
+  const createdSession = await localRegistrationRequest(
+    '/v1/verification/session',
+    'POST',
+    { number },
+    verificationSessionResponseZod
+  );
+
+  const updatedSession = await localRegistrationRequest(
+    `/v1/verification/session/${encodeURIComponent(createdSession.id)}`,
+    'PATCH',
+    { captcha },
+    verificationSessionResponseZod
+  );
+
+  if (!updatedSession.allowedToRequestCode) {
+    throw new Error('requestVerification(local): Not allowed to send code');
+  }
+
+  const requestedCodeSession = await localRegistrationRequest(
+    `/v1/verification/session/${encodeURIComponent(createdSession.id)}/code`,
+    'POST',
+    {
+      transport: transport === VerificationTransport.SMS ? 'sms' : 'voice',
+      client: 'ios',
+    },
+    verificationSessionResponseZod
+  );
+
+  return { sessionId: requestedCodeSession.id };
+}
+
+async function createAccountOverLocalHttp({
+  sessionId,
+  number,
+  code,
+  newPassword,
+  registrationId,
+  pniRegistrationId,
+  accessKey,
+  aciPublicKey,
+  pniPublicKey,
+  aciSignedPreKey,
+  pniSignedPreKey,
+  aciPqLastResortPreKey,
+  pniPqLastResortPreKey,
+}: CreateAccountOptionsType): Promise<CreateAccountResultType> {
+  log.info('createAccount: using local HTTP registration flow');
+
+  const verifiedSession = await localRegistrationRequest(
+    `/v1/verification/session/${encodeURIComponent(sessionId)}/code`,
+    'PUT',
+    { code },
+    verificationSessionResponseZod
+  );
+
+  if (!verifiedSession.verified) {
+    throw new Error('createAccount(local): invalid code');
+  }
+
+  const capabilities: CapabilitiesUploadType = {
+    attachmentBackfill: true,
+    spqr: true,
+  };
+
+  // Desktop doesn't support recovery but the server still expects a value.
+  const recoveryPassword = getRandomBytes(32);
+  const response = await localRegistrationRequest(
+    '/v1/registration',
+    'POST',
+    {
+      sessionId,
+      accountAttributes: {
+        fetchesMessages: true,
+        registrationId,
+        pniRegistrationId,
+        name: '',
+        registrationLock: '',
+        unidentifiedAccessKey: Bytes.toBase64(accessKey),
+        unrestrictedUnidentifiedAccess: false,
+        capabilities,
+        discoverableByPhoneNumber: false,
+        recoveryPassword: Bytes.toBase64(recoveryPassword),
+      },
+      skipDeviceTransfer: true,
+      aciIdentityKey: Bytes.toBase64(aciPublicKey.serialize()),
+      pniIdentityKey: Bytes.toBase64(pniPublicKey.serialize()),
+      aciSignedPreKey: serializeSignedPreKey(aciSignedPreKey),
+      pniSignedPreKey: serializeSignedPreKey(pniSignedPreKey),
+      aciPqLastResortPreKey: serializeSignedPreKey(aciPqLastResortPreKey),
+      pniPqLastResortPreKey: serializeSignedPreKey(pniPqLastResortPreKey),
+    },
+    localCreateAccountResponseZod,
+    {
+      Authorization: getBasicAuth({
+        username: number,
+        password: newPassword,
+      }),
+    }
+  );
+
+  return {
+    aci: Aci.fromUuid(response.uuid),
+    pni: Pni.fromUuid(response.pni),
+  };
 }
 
 export async function checkAccountExistence(
@@ -2843,6 +3102,24 @@ export async function createAccount({
   aciPqLastResortPreKey,
   pniPqLastResortPreKey,
 }: CreateAccountOptionsType): Promise<CreateAccountResultType> {
+  if (isLocalHttpChatService()) {
+    return createAccountOverLocalHttp({
+      sessionId,
+      number,
+      code,
+      newPassword,
+      registrationId,
+      pniRegistrationId,
+      accessKey,
+      aciPublicKey,
+      pniPublicKey,
+      aciSignedPreKey,
+      pniSignedPreKey,
+      aciPqLastResortPreKey,
+      pniPqLastResortPreKey,
+    });
+  }
+
   const session = await libsignalNet.resumeRegistrationSession({
     sessionId,
     e164: number,

@@ -515,6 +515,14 @@ export default class MessageReceiver
     return Boolean(this.#isEmptied);
   }
 
+  public forceEmptyEvent(): void {
+    if (this.#isEmptied) {
+      return;
+    }
+
+    this.#onEmpty();
+  }
+
   public async drain(): Promise<void> {
     const waitForEncryptedQueue = async () =>
       this.#addToQueue(
