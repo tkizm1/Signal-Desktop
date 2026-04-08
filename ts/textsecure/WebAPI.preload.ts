@@ -89,7 +89,7 @@ import type {
 } from './Types.d.ts';
 import { handleStatusCode, translateError } from './Utils.dom.ts';
 import { createLogger } from '../logging/log.std.ts';
-import { isMockServer } from '../util/isMockServer.dom.ts';
+import { isLocalHttpMockServer } from '../util/isLocalHttpMockServer.dom.ts';
 import { maybeParseUrl, urlPathFromComponents } from '../util/url.std.ts';
 import { HOUR, MINUTE, SECOND } from '../util/durations/index.std.ts';
 import { safeParseNumber } from '../util/numbers.std.ts';
@@ -407,10 +407,7 @@ async function getFetchOptions<Type extends ResponseType, OutputShape>(
 }
 
 function isLocalHttpChatService(): boolean {
-  const parsedChatServiceUrl = maybeParseUrl(chatServiceUrl);
-  return (
-    parsedChatServiceUrl?.protocol === 'http:' && isMockServer(chatServiceUrl)
-  );
+  return isLocalHttpMockServer(chatServiceUrl);
 }
 
 function getLocalHttpSocketStatuses(): SocketStatuses {
@@ -1109,6 +1106,10 @@ const confirmUsernameResultZod = z.object({
 export type ConfirmUsernameResultType = z.infer<
   typeof confirmUsernameResultZod
 >;
+
+const getAccountForUsernameResultZod = z.object({
+  uuid: aciSchema,
+});
 
 const replaceUsernameLinkResultZod = z.object({
   usernameLinkHandle: z.string(),
@@ -2563,6 +2564,28 @@ export async function getTransferArchive({
 export async function getAccountForUsername({
   hash,
 }: GetAccountForUsernameOptionsType): Promise<GetAccountForUsernameResultType> {
+  if (isLocalHttpChatService()) {
+    try {
+      const { uuid } = await _ajax({
+        host: 'chatService',
+        call: 'username',
+        httpType: 'GET',
+        urlParameters: `/${toWebSafeBase64(Bytes.toBase64(hash))}`,
+        responseType: 'json',
+        unauthenticated: true,
+        zodSchema: getAccountForUsernameResultZod,
+      });
+
+      return uuid;
+    } catch (error) {
+      if (error instanceof HTTPError && error.code === 404) {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
   const aci = await _retry(async () => {
     const chat = await socketManager.getUnauthenticatedApi();
     return chat.lookUpUsernameHash({ hash });
