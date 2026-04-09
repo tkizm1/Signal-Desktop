@@ -48,7 +48,9 @@ ts/protobuf/*.d.ts
 /.idea
 /.vscode
 /.zed
+.local-dev/
 *.sublime*
 *.map
 
 release-win/
+release-dev-zip/

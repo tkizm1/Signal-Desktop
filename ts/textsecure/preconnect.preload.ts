@@ -7,6 +7,7 @@ import { getUserAgent } from '../util/getUserAgent.node.ts';
 import { isStagingServer } from '../util/isStagingServer.dom.ts';
 import { getMockServerPort } from '../util/getMockServerPort.dom.ts';
 import { isMockServer } from '../util/isMockServer.dom.ts';
+import { isLoopbackMockServer } from '../util/isLoopbackMockServer.dom.ts';
 import { isLocalHttpMockServer } from '../util/isLocalHttpMockServer.dom.ts';
 import { pemToDer } from '../util/pemToDer.std.ts';
 import { maybeParseUrl } from '../util/url.std.ts';
@@ -16,6 +17,38 @@ import { createLogger } from '../logging/log.std.ts';
 
 const log = createLogger('preconnect');
 const DISCARD_PORT = 9; // Reserved by RFC 863.
+const DEFAULT_LOCAL_CHAT_PROXY_PORT = 8080;
+const DEFAULT_LOCAL_CDSI_PROXY_PORT = 8083;
+
+function getUrlPort(url: URL): number {
+  if (url.port) {
+    return parseInt(url.port, 10);
+  }
+
+  return url.protocol === 'https:' ? 443 : 80;
+}
+
+function getLibsignalLocalOverridePort(
+  serverUrl: string,
+  fallbackPort: number
+): number {
+  const explicitPort = getMockServerPort(serverUrl);
+
+  if (explicitPort) {
+    return parseInt(explicitPort, 10);
+  }
+
+  if (!isLoopbackMockServer(serverUrl)) {
+    return fallbackPort;
+  }
+
+  const parsedUrl = new URL(serverUrl);
+  if (parsedUrl.protocol === 'https:') {
+    return 443;
+  }
+
+  return 80;
+}
 
 export function getLocalServerPorts(
   chatServiceUrl: string,
@@ -25,11 +58,50 @@ export function getLocalServerPorts(
   cdsiPort: number;
 }> {
   return {
-    chatPort: parseInt(getMockServerPort(chatServiceUrl), 10),
+    chatPort: getLibsignalLocalOverridePort(
+      chatServiceUrl,
+      DEFAULT_LOCAL_CHAT_PROXY_PORT
+    ),
     cdsiPort: isMockServer(directoryUrl)
-      ? parseInt(getMockServerPort(directoryUrl), 10)
+      ? getLibsignalLocalOverridePort(
+          directoryUrl,
+          DEFAULT_LOCAL_CDSI_PROXY_PORT
+        )
       : DISCARD_PORT,
   };
+}
+
+export function getCustomHostOverrides(
+  chatServiceUrl: string,
+  directoryUrl: string
+): Readonly<{
+  chatHostname: string;
+  chatPort: number;
+  cdsiHostname?: string;
+  cdsiPort?: number;
+}> {
+  const parsedChatUrl = new URL(chatServiceUrl);
+  const parsedDirectoryUrl = maybeParseUrl(directoryUrl);
+  const overrides: {
+    chatHostname: string;
+    chatPort: number;
+    cdsiHostname?: string;
+    cdsiPort?: number;
+  } = {
+    chatHostname: parsedChatUrl.hostname,
+    chatPort: getUrlPort(parsedChatUrl),
+  };
+
+  if (
+    parsedDirectoryUrl?.protocol === 'https:' &&
+    isMockServer(directoryUrl) &&
+    !isLoopbackMockServer(directoryUrl)
+  ) {
+    overrides.cdsiHostname = parsedDirectoryUrl.hostname;
+    overrides.cdsiPort = getUrlPort(parsedDirectoryUrl);
+  }
+
+  return overrides;
 }
 
 // Libsignal has internally configured values for domain names
@@ -53,14 +125,50 @@ function resolveLibsignalNet(
   if (isMockServer(chatServiceUrl)) {
     const parsedChatUrl = maybeParseUrl(chatServiceUrl);
     const parsedDirectoryUrl = maybeParseUrl(directoryUrl);
-    const isLocalHttp =
-      parsedChatUrl?.protocol === 'http:' ||
-      parsedDirectoryUrl?.protocol === 'http:';
+    const isChatLocalHttp = parsedChatUrl?.protocol === 'http:';
+    const isRemoteHttpsMock =
+      parsedChatUrl?.protocol === 'https:' &&
+      !isLoopbackMockServer(chatServiceUrl);
     const { chatPort, cdsiPort } = getLocalServerPorts(
       chatServiceUrl,
       directoryUrl
     );
     log.info('libsignal net environment resolved to mock');
+    if (isRemoteHttpsMock) {
+      const { chatHostname, chatPort, cdsiHostname, cdsiPort } =
+        getCustomHostOverrides(chatServiceUrl, directoryUrl);
+
+      log.info(
+        `libsignal net using direct custom host override for remote HTTPS mock chat on ${chatHostname}:${chatPort}`
+      );
+      if (cdsiHostname && cdsiPort) {
+        log.info(
+          `libsignal net using direct custom host override for remote HTTPS mock CDSI on ${cdsiHostname}:${cdsiPort}`
+        );
+      } else if (isMockServer(directoryUrl)) {
+        log.info(
+          'libsignal net leaving CDSI on the base environment because directoryUrl is not a remote HTTPS override target'
+        );
+      }
+
+      return new Net.Net({
+        customHostOverride: true,
+        env: Net.Environment.Production,
+        userAgent,
+        chatHostname,
+        chatPort,
+        cdsiHostname,
+        cdsiPort,
+        rootCertificateDer: new Uint8Array(0),
+      });
+    }
+
+    if (parsedDirectoryUrl?.protocol === 'http:' && !isChatLocalHttp) {
+      log.info(
+        'libsignal net chat is HTTPS mock while CDSI remains local HTTP; preferring HTTPS chat settings'
+      );
+    }
+
     return new Net.Net({
       localTestServer: true,
       userAgent,
@@ -69,10 +177,10 @@ function resolveLibsignalNet(
       TESTING_localServer_svr2Port: DISCARD_PORT,
       TESTING_localServer_svrBPort: DISCARD_PORT,
       TESTING_localServer_rootCertificateDer:
-        certificateAuthority && !isLocalHttp
+        certificateAuthority && !isChatLocalHttp
           ? pemToDer(certificateAuthority)
           : new Uint8Array(new ArrayBuffer(0)),
-      TESTING_localServer_httpVersion: isLocalHttp ? 1 : undefined,
+      TESTING_localServer_httpVersion: isChatLocalHttp ? 1 : undefined,
     });
   }
 

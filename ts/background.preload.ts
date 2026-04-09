@@ -287,7 +287,7 @@ import { initMessageCleanup } from './services/messageStateCleanup.dom.ts';
 import { MessageCache } from './services/MessageCache.preload.ts';
 import { saveAndNotify } from './messages/saveAndNotify.preload.ts';
 import { getBackupKeyHash } from './services/backups/crypto.preload.ts';
-import { isLocalHttpMockServer } from './util/isLocalHttpMockServer.dom.ts';
+import { shouldBypassLocalHttpWebSocket } from './util/shouldBypassLocalHttpWebSocket.dom.ts';
 
 const { isNumber, throttle } = lodash;
 
@@ -299,7 +299,7 @@ export function isOverHourIntoPast(timestamp: number): boolean {
 }
 
 function isLocalHttpChatService(): boolean {
-  return isLocalHttpMockServer(window.SignalContext.config.serverUrl);
+  return shouldBypassLocalHttpWebSocket(window.SignalContext.config.serverUrl);
 }
 
 export async function cleanupSessionResets(): Promise<void> {

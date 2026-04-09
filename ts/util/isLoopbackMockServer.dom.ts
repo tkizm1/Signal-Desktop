@@ -1,7 +1,7 @@
-// Copyright 2024 Signal Messenger, LLC
+// Copyright 2026 Signal Messenger, LLC
 // SPDX-License-Identifier: AGPL-3.0-only
 
-export function isMockServer(
+export function isLoopbackMockServer(
   serverUrl = window.SignalContext.config.serverUrl
 ): boolean {
   try {
@@ -10,11 +10,9 @@ export function isMockServer(
     return (
       url.hostname === 'localhost' ||
       url.hostname === '127.0.0.1' ||
-      url.hostname === '5.175.220.72' ||
-      url.hostname === 'signal.tkisnnn.pp.ua' ||
-      url.hostname === '[::1]' // IPv6 loopback address
+      url.hostname === '[::1]'
     );
-  } catch (e) {
+  } catch {
     return false;
   }
 }

@@ -7,6 +7,7 @@ export type PackageJsonType = ReadonlyDeep<{
   name: string;
   version: string;
   productName: string;
+  environment?: string;
   build: {
     appId: string;
     mac: {

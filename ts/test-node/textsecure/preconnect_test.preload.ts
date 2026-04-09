@@ -3,7 +3,10 @@
 
 import { assert } from 'chai';
 
-import { getLocalServerPorts } from '../../textsecure/preconnect.preload.ts';
+import {
+  getCustomHostOverrides,
+  getLocalServerPorts,
+} from '../../textsecure/preconnect.preload.ts';
 
 describe('preconnect', () => {
   describe('getLocalServerPorts', () => {
@@ -29,6 +32,49 @@ describe('preconnect', () => {
         {
           chatPort: 8080,
           cdsiPort: 9,
+        }
+      );
+    });
+
+    it('uses localhost proxy defaults for remote https mock servers without explicit ports', () => {
+      assert.deepEqual(
+        getLocalServerPorts(
+          'https://signal.tkisnnn.pp.ua',
+          'https://localhost:8083'
+        ),
+        {
+          chatPort: 8080,
+          cdsiPort: 8083,
+        }
+      );
+    });
+  });
+
+  describe('getCustomHostOverrides', () => {
+    it('uses the remote https host directly for chat websocket connections', () => {
+      assert.deepEqual(
+        getCustomHostOverrides(
+          'https://signal.tkisnnn.pp.ua',
+          'https://localhost:8083'
+        ),
+        {
+          chatHostname: 'signal.tkisnnn.pp.ua',
+          chatPort: 443,
+        }
+      );
+    });
+
+    it('includes a remote https CDSI override when directoryUrl is also remote', () => {
+      assert.deepEqual(
+        getCustomHostOverrides(
+          'https://signal.tkisnnn.pp.ua:8443',
+          'https://5.175.220.72:8083'
+        ),
+        {
+          chatHostname: 'signal.tkisnnn.pp.ua',
+          chatPort: 8443,
+          cdsiHostname: '5.175.220.72',
+          cdsiPort: 8083,
         }
       );
     });

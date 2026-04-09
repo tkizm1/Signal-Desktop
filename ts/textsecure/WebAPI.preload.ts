@@ -90,6 +90,7 @@ import type {
 import { handleStatusCode, translateError } from './Utils.dom.ts';
 import { createLogger } from '../logging/log.std.ts';
 import { isLocalHttpMockServer } from '../util/isLocalHttpMockServer.dom.ts';
+import { shouldBypassLocalHttpWebSocket } from '../util/shouldBypassLocalHttpWebSocket.dom.ts';
 import { maybeParseUrl, urlPathFromComponents } from '../util/url.std.ts';
 import { HOUR, MINUTE, SECOND } from '../util/durations/index.std.ts';
 import { safeParseNumber } from '../util/numbers.std.ts';
@@ -408,6 +409,10 @@ async function getFetchOptions<Type extends ResponseType, OutputShape>(
 
 function isLocalHttpChatService(): boolean {
   return isLocalHttpMockServer(chatServiceUrl);
+}
+
+function shouldBypassAuthenticatedWebSocket(): boolean {
+  return shouldBypassLocalHttpWebSocket(chatServiceUrl);
 }
 
 function getLocalHttpSocketStatuses(): SocketStatuses {
@@ -1831,7 +1836,7 @@ export async function connect({
   username = initialUsername;
   password = initialPassword;
 
-  if (isLocalHttpChatService()) {
+  if (shouldBypassAuthenticatedWebSocket()) {
     log.info(
       'connect: skipping authenticated websocket for local HTTP chat service'
     );
@@ -2035,7 +2040,7 @@ export async function authenticate({
   username = newUsername;
   password = newPassword;
 
-  if (isLocalHttpChatService()) {
+  if (shouldBypassAuthenticatedWebSocket()) {
     emitLocalHttpOnlineStatus('authenticate');
     return;
   }
@@ -2051,7 +2056,7 @@ export async function logout(): Promise<void> {
 }
 
 export function getSocketStatus(): SocketStatuses {
-  if (isLocalHttpChatService()) {
+  if (shouldBypassAuthenticatedWebSocket()) {
     return getLocalHttpSocketStatuses();
   }
 
@@ -2068,7 +2073,7 @@ export function checkSockets(): void {
 }
 
 export function isOnline(): boolean | undefined {
-  if (isLocalHttpChatService()) {
+  if (shouldBypassAuthenticatedWebSocket()) {
     return true;
   }
 
@@ -2076,7 +2081,7 @@ export function isOnline(): boolean | undefined {
 }
 
 export async function onNavigatorOnline(): Promise<void> {
-  if (isLocalHttpChatService()) {
+  if (shouldBypassAuthenticatedWebSocket()) {
     emitLocalHttpOnlineStatus('navigator-online');
     return;
   }
@@ -2085,7 +2090,7 @@ export async function onNavigatorOnline(): Promise<void> {
 }
 
 export async function onNavigatorOffline(): Promise<void> {
-  if (isLocalHttpChatService()) {
+  if (shouldBypassAuthenticatedWebSocket()) {
     window.Whisper.events.emit('offline');
     return;
   }
@@ -2096,7 +2101,7 @@ export async function onNavigatorOffline(): Promise<void> {
 export async function onExpiration(
   reason: SocketExpirationReason
 ): Promise<void> {
-  if (isLocalHttpChatService()) {
+  if (shouldBypassAuthenticatedWebSocket()) {
     log.info(`onExpiration: ignoring ${reason} for local HTTP chat service`);
     return;
   }
@@ -2105,7 +2110,7 @@ export async function onExpiration(
 }
 
 export async function reconnect(): Promise<void> {
-  if (isLocalHttpChatService()) {
+  if (shouldBypassAuthenticatedWebSocket()) {
     emitLocalHttpOnlineStatus('reconnect');
     return;
   }
@@ -2122,7 +2127,7 @@ export function unregisterRequestHandler(handler: IRequestHandler): void {
 }
 
 export function onHasStoriesDisabledChange(newValue: boolean): void {
-  if (isLocalHttpChatService()) {
+  if (shouldBypassAuthenticatedWebSocket()) {
     log.info(
       `onHasStoriesDisabledChange: ignoring websocket reconnect for local HTTP (${newValue})`
     );

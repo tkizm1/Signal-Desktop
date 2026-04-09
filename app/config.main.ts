@@ -14,12 +14,23 @@ import {
 } from '../ts/environment.std.ts';
 import { createLogger } from '../ts/logging/log.std.ts';
 import { getAppRootDir } from '../ts/util/appRootDir.main.ts';
+import { packageJson } from '../ts/util/packageJson.main.ts';
 
 const log = createLogger('config');
 
+function getPackagedEnvironment(): Environment {
+  const environment = parseEnvironment(packageJson.environment);
+
+  if (environment !== Environment.PackagedApp) {
+    log.info(`Using packaged environment ${environment}`);
+  }
+
+  return environment;
+}
+
 // In production mode, NODE_ENV cannot be customized by the user
 if (app.isPackaged) {
-  setEnvironment(Environment.PackagedApp, false);
+  setEnvironment(getPackagedEnvironment(), false);
 } else {
   setEnvironment(
     parseEnvironment(process.env.NODE_ENV || 'development'),

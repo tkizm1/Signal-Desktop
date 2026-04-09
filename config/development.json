@@ -1,5 +1,6 @@
 {
-  "directoryUrl": "http://5.175.220.72:8083",
+  "directoryUrl": "https://localhost:8083",
+  "certificateAuthorityPath": ".local-dev/tls/localhost-cert.pem",
   "storageProfile": "development",
   "openDevTools": true
 }
