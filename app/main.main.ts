@@ -2823,6 +2823,114 @@ function removeDarkOverlay() {
   }
 }
 
+function getOptionalConfigValue(configKey: string): string | undefined {
+  if (!config.has(configKey)) {
+    return undefined;
+  }
+
+  return config.get<string | null>(configKey) || undefined;
+}
+
+function resolveConfigPath(configPath: string): string {
+  return configPath.startsWith('/') ? configPath : join(rootDir, configPath);
+}
+
+function readConfigTextFromPath(
+  configPathKey: string,
+  options?: {
+    fallbackValue?: string;
+    trim?: boolean;
+  }
+): string {
+  const { fallbackValue, trim = false } = options ?? {};
+  const configPath = getOptionalConfigValue(configPathKey);
+
+  if (!configPath) {
+    return fallbackValue ?? '';
+  }
+
+  const resolvedPath = resolveConfigPath(configPath);
+
+  if (
+    fallbackValue !== undefined &&
+    app.isPackaged &&
+    !fsExtra.existsSync(resolvedPath)
+  ) {
+    log.warn(
+      `${configPathKey} ${resolvedPath} not found in packaged app; falling back to inline config`
+    );
+    return fallbackValue;
+  }
+
+  try {
+    const value = fsExtra.readFileSync(resolvedPath, 'utf8');
+    return trim ? value.trim() : value;
+  } catch (error) {
+    throw new Error(
+      `Failed to read ${configPathKey} ${resolvedPath}: ${Errors.toLogFormat(
+        error
+      )}`
+    );
+  }
+}
+
+function getRendererServerTrustRoots(): Array<string> {
+  const fallbackServerTrustRoots = config.get<Array<string>>('serverTrustRoots');
+  const serverTrustRootsPath = getOptionalConfigValue('serverTrustRootsPath');
+
+  if (!serverTrustRootsPath) {
+    return fallbackServerTrustRoots;
+  }
+
+  const contents = readConfigTextFromPath('serverTrustRootsPath', {
+    fallbackValue: JSON.stringify(fallbackServerTrustRoots),
+    trim: true,
+  });
+
+  if (!contents) {
+    return [];
+  }
+
+  if (contents.startsWith('[')) {
+    let parsedJson: unknown;
+
+    try {
+      parsedJson = JSON.parse(contents);
+    } catch (error) {
+      throw new Error(
+        `Failed to parse serverTrustRootsPath ${resolveConfigPath(
+          serverTrustRootsPath
+        )}: ${Errors.toLogFormat(error)}`
+      );
+    }
+
+    const parsed = safeParseUnknown(z.array(z.string().nonempty()), parsedJson);
+
+    if (!parsed.success) {
+      throw new Error(
+        `Failed to parse serverTrustRootsPath ${resolveConfigPath(
+          serverTrustRootsPath
+        )}: ${JSON.stringify(parsed.error.flatten())}`
+      );
+    }
+
+    return parsed.data;
+  }
+
+  return contents
+    .split(/\r?\n/u)
+    .map(value => value.trim())
+    .filter(value => Boolean(value) && !value.startsWith('#'));
+}
+
+function getRendererCertificateAuthority(): string {
+  const fallbackCertificateAuthority = config.get<string>('certificateAuthority');
+
+  return readConfigTextFromPath('certificateAuthorityPath', {
+    fallbackValue: fallbackCertificateAuthority,
+  });
+}
+
 ipc.on('get-config', async event => {
   const theme = await getResolvedThemeSetting();
 
@@ -2858,7 +2966,7 @@ ipc.on('get-config', async event => {
     cdnUrl0: config.get<string>('cdn.0'),
     cdnUrl2: config.get<string>('cdn.2'),
     cdnUrl3: config.get<string>('cdn.3'),
-    certificateAuthority: config.get<string>('certificateAuthority'),
+    certificateAuthority: getRendererCertificateAuthority(),
     environment:
       !isTestEnvironment(getEnvironment()) && ciMode
         ? Environment.PackagedApp
@@ -2871,6 +2979,8 @@ ipc.on('get-config', async event => {
     dnsFallback: await getDNSFallback(),
     disableIPv6: DISABLE_IPV6,
     disableScreenSecurity: DISABLE_SCREEN_SECURITY,
+    enableLocalHttpWebSocket:
+      config.get<boolean>('enableLocalHttpWebSocket') || false,
     nodeVersion: process.versions.node,
     hostname: os.hostname(),
     osRelease: os.release(),
@@ -2881,11 +2991,26 @@ ipc.on('get-config', async event => {
     sfuUrl: config.get('sfuUrl'),
     reducedMotionSetting: animationSettings.prefersReducedMotion,
     registrationChallengeUrl: config.get<string>('registrationChallengeUrl'),
-    serverPublicParams: config.get<string>('serverPublicParams'),
-    serverTrustRoots: config.get<Array<string>>('serverTrustRoots'),
+    serverPublicParams: readConfigTextFromPath('serverPublicParamsPath', {
+      fallbackValue: config.get<string>('serverPublicParams'),
+      trim: true,
+    }),
+    serverTrustRoots: getRendererServerTrustRoots(),
     stripePublishableKey: config.get<string>('stripePublishableKey'),
-    genericServerPublicParams: config.get<string>('genericServerPublicParams'),
-    backupServerPublicParams: config.get<string>('backupServerPublicParams'),
+    genericServerPublicParams: readConfigTextFromPath(
+      'genericServerPublicParamsPath',
+      {
+        fallbackValue: config.get<string>('genericServerPublicParams'),
+        trim: true,
+      }
+    ),
+    backupServerPublicParams: readConfigTextFromPath(
+      'backupServerPublicParamsPath',
+      {
+        fallbackValue: config.get<string>('backupServerPublicParams'),
+        trim: true,
+      }
+    ),
     theme,
     appStartInitialSpellcheckSetting,
 
