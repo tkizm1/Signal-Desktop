@@ -691,5 +691,6 @@
   },
   "volta": {
     "node": "24.14.0"
-  }
+  },
+  "environment": "development"
 }

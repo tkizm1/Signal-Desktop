@@ -43,3 +43,8 @@ The form and manner of this distribution makes it eligible for export under the 
 Copyright 2013-2024 Signal Messenger, LLC
 
 Licensed under the GNU AGPLv3: https://www.gnu.org/licenses/agpl-3.0.html
+
+
+## build dev
+pnpm run build:dev
+SIGNAL_ENV=development pnpm run build:electron --linux zip --x64 --publish=never --config.directories.output=release-dev-zip/pack
