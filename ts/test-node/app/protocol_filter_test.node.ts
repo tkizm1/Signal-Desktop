@@ -3,9 +3,25 @@
 
 import { assert } from 'chai';
 
-import { _urlToPath } from '../../../app/protocol_filter.node.ts';
+import {
+  _isAllowedHttpTarget,
+  _urlToPath,
+} from '../../../app/protocol_filter.node.ts';
 
 describe('Protocol Filter', () => {
+  describe('_isAllowedHttpTarget', () => {
+    it('allows configured remote mock server domains', () => {
+      assert.isTrue(_isAllowedHttpTarget('https://api.xufu.ai/v1/messages'));
+      assert.isTrue(
+        _isAllowedHttpTarget('https://signal.tkisnnn.pp.ua/v1/messages')
+      );
+    });
+
+    it('rejects non-whitelisted remote domains', () => {
+      assert.isFalse(_isAllowedHttpTarget('https://chat.signal.org/v1/messages'));
+    });
+  });
+
   describe('_urlToPath', () => {
     it('returns proper file path for unix style file URI with querystring', () => {
       const path =

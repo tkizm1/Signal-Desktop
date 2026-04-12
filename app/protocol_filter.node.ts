@@ -24,6 +24,8 @@ const ALLOWED_HTTP_HOSTS = new Set([
   '127.0.0.1',
   '::1',
   '5.175.220.72',
+  'signal.tkisnnn.pp.ua',
+  'api.xufu.ai',
 ]);
 
 type CallbackType = (response: string | ProtocolResponse) => void;
@@ -157,7 +159,7 @@ function _disabledHandler(
   callback({ error: -10 });
 }
 
-function _isAllowedHttpTarget(targetUrl: string): boolean {
+export function _isAllowedHttpTarget(targetUrl: string): boolean {
   try {
     const parsed = new URL(targetUrl);
     return ALLOWED_HTTP_HOSTS.has(parsed.hostname);

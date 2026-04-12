@@ -39,7 +39,7 @@ describe('preconnect', () => {
     it('uses localhost proxy defaults for remote https mock servers without explicit ports', () => {
       assert.deepEqual(
         getLocalServerPorts(
-          'https://signal.tkisnnn.pp.ua',
+          'https://api.xufu.ai',
           'https://localhost:8083'
         ),
         {
@@ -54,11 +54,11 @@ describe('preconnect', () => {
     it('uses the remote https host directly for chat websocket connections', () => {
       assert.deepEqual(
         getCustomHostOverrides(
-          'https://signal.tkisnnn.pp.ua',
+          'https://api.xufu.ai',
           'https://localhost:8083'
         ),
         {
-          chatHostname: 'signal.tkisnnn.pp.ua',
+          chatHostname: 'api.xufu.ai',
           chatPort: 443,
         }
       );
