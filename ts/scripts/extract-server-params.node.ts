@@ -252,7 +252,7 @@ function decodeBase64(input: string, label: string): Buffer {
 
 function derivePublicKeyFromPrivateKey(privateKeyBase64: string): string {
   const privateKeyBytes = decodeBase64(privateKeyBase64, 'trust root private key');
-  const privateKey = PrivateKey.deserialize(privateKeyBytes);
+  const privateKey = PrivateKey.deserialize(new Uint8Array(privateKeyBytes));
   return Buffer.from(privateKey.getPublicKey().serialize()).toString('base64');
 }
 
