@@ -4381,13 +4381,17 @@ async function _getAttachment({
 }
 
 export async function getAttachmentUploadForm(): Promise<AttachmentUploadFormResponseType> {
-  return _ajax({
+  const response = await _ajax({
     host: 'chatService',
     call: 'attachmentUploadForm',
     httpType: 'GET',
     responseType: 'json',
     zodSchema: attachmentUploadFormResponse,
   });
+
+  log.info(`[debug] attachment upload form cdn ${response.cdn}`);
+
+  return response;
 }
 
 export async function putEncryptedAttachment(
